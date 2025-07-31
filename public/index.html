@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Adult Chat - 18+ Only</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #121212;
+      color: #fff;
+      text-align: center;
+      padding: 20px;
+    }
+    input, button {
+      padding: 10px;
+      margin: 10px;
+      border-radius: 5px;
+      border: none;
+    }
+    video {
+      width: 300px;
+      height: 225px;
+      background: #000;
+      margin: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Adult Video Chat</h1>
+  <input type="text" id="nickname" placeholder="Enter nickname" maxlength="20" />
+  <button onclick="enterSite()">Enter</button>
+  <div id="chat" style="display:none;">
+    <p>You: <span id="yourNick"></span> | Partner: <span id="partnerNick"></span></p>
+    <video id="localVideo" autoplay muted></video>
+    <video id="remoteVideo" autoplay></video>
+    <br />
+    <button onclick="nextChat()">Next</button>
+    <button onclick="reportUser()">Report</button>
+  </div>
+  <script>
+    const socket = io();
+    let nickname = "";
+    let peer;
+
+    function enterSite() {
+      nickname = document.getElementById('nickname').value.replace(/[^a-zA-Z0-9 ]/g, '');
+      if (!nickname) return alert('Nickname required');
+      document.getElementById('yourNick').textContent = nickname;
+      document.getElementById('chat').style.display = 'block';
+      socket.emit('join', { nickname });
+      startVideo();
+    }
+
+    async function startVideo() {
+      const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      document.getElementById('localVideo').srcObject = localStream;
+      socket.on('partner-found', ({ partner, nickname: partnerNick }) => {
+        document.getElementById('partnerNick').textContent = partnerNick;
+        setupPeer(partner, localStream);
+      });
+      socket.on('signal', async ({ from, data }) => {
+        if (!peer) setupPeer(from, localStream);
+        if (data.type === 'offer') {
+          await peer.setRemoteDescription(new RTCSessionDescription(data));
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+          socket.emit('signal', { to: from, data: answer });
+        } else if (data.type === 'answer') {
+          await peer.setRemoteDescription(new RTCSessionDescription(data));
+        } else if (data.candidate) {
+          await peer.addIceCandidate(new RTCIceCandidate(data));
+        }
+      });
+    }
+
+    function setupPeer(partner, stream) {
+      peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      peer.onicecandidate = e => e.candidate && socket.emit('signal', { to: partner, data: e.candidate });
+      peer.ontrack = e => document.getElementById('remoteVideo').srcObject = e.streams[0];
+      stream.getTracks().forEach(track => peer.addTrack(track, stream));
+      peer.onnegotiationneeded = async () => {
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        socket.emit('signal', { to: partner, data: offer });
+      };
+    }
+
+    function nextChat() {
+      location.reload();
+    }
+
+    function reportUser() {
+      socket.emit('report');
+      alert('User reported.');
+      location.reload();
+    }
+  </script>
+</body>
+</html>
